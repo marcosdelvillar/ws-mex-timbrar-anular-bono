@@ -1,0 +1,8 @@
+/packages
+/.vs
+/wsAnularTimbre/bin
+/wsAnularTimbre/Bitacora
+/wsAnularTimbre/obj
+/wsAnularTimbre/out
+/wsAnularTimbre/Web.config
+/wsAnularTimbre/Web.debug.config
