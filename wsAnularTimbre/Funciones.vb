@@ -1,5 +1,6 @@
 ﻿Imports System.Data.SqlClient
 Imports System.IO
+Imports System.ServiceModel
 
 Module Funciones
 
@@ -58,17 +59,21 @@ Module Funciones
 
     End Sub
 
-    Public Function EscribirArchivo(ByVal sCONTENIDO As String, ByVal sDESTINO As String) As String
 
-        Dim strArchivo As String = sDESTINO
+    Public Function GetWriteDirectory() As String
+        Return ConfigurationManager.AppSettings("DirSalida").ToString & "" & Now.Year & "\" & Format(Now.Month, "00") & "\"
+    End Function
+
+    Public Function EscribirArchivo(ByVal sCONTENIDO As String) As String
+
+        Dim Directorio As String = ConfigurationManager.AppSettings("DirSalida").ToString & "" & Now.Year & "\" & Format(Now.Month, "00") & "\"
+        Dim strArchivo As String = Directorio & $"bita{Now:dd}.txt"
+        If Not IO.Directory.Exists(Directorio) Then IO.Directory.CreateDirectory(Directorio)
 
         Try
-            'If FileIO.FileSystem.FileExists(strArchivo) Then FileIO.FileSystem.DeleteFile(strArchivo)
-
             FileOpen(2, strArchivo, OpenMode.Append, OpenAccess.Write, OpenShare.LockWrite)
             PrintLine(2, sCONTENIDO)
             FileClose(2)
-
             Return "TODOOK"
         Catch ex As Exception
             Return "Error al escribir archivo: " & ex.Message.ToString

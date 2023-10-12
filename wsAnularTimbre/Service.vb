@@ -32,28 +32,36 @@ Public Class Service
     ReadOnly apiKyPruebas As String = "yywkagn3khxappz4ithfvgmbypuxinab4xxup4z48tdbcqk66tkzm5suvbkeqxmi7bymjgzpspvxc443" ''LLave para Produccion
     'Dim apiKy As String = "d5ecdce5903344c08eeb1c7d8265ae4fbfb22fec42c540979bfe03f191aa7562" ''LLave para Produccion
 
-    Private ReadOnly RutaBitacora As String = "C:\inetpub\wwwroot\wsTimAnularBono\Bitacora\"
-
     <WebMethod()>
     Public Function Version() As String
-        Return "Ver. 1.1.2"
+        Return "Ver. 1.1.3"
     End Function
 
 
     <WebMethod()>
     Public Function CancelarCfdi(idBono As String,
-                                 idFbo As String) As String
+                                 idFbo As String,
+                                 idUsuario As Integer,
+                                 contrasena As String) As String
 
         Dim hsInfo As New Hashtable
         Dim ds As System.Data.DataSet
         Dim mensaje As String
         Dim sRes As String = ""
 
+        If Not contrasena.Equals("G1v3YarL@ve4946") Then
+            Return "Contraseña no verificada"
+        End If
+
+        If idUsuario <= 0 Then
+            Return "IdUsuario no válido."
+        End If
+
+
         'IdBono = "977292"
         'IdFbo = "520000033747"
 
-        Dim archivoBitactora As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & ".txt"
-        Dim archivoXmlStatus As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & "_cancelaCFDI.xml"
+        Dim archivoXmlStatus As String = GetWriteDirectory() & idBono & "_" & idFbo & "_cancelaCFDI.xml"
 
         Dim oWs As New AnulacionTimbre.CancelacionClient()
 
@@ -64,7 +72,7 @@ Public Class Service
 
         If ds.Tables(0).Rows.Count = 0 Then
             mensaje = "Registro no encontrado con el status -1- *spTimbrar_Anulado_UUID*"
-            EscribirArchivo(mensaje, archivoBitactora)
+            EscribirArchivo(mensaje)
             Return mensaje
         End If
 
@@ -90,15 +98,16 @@ Public Class Service
             hsInfo.Clear()
             hsInfo.Add("@IdBono", idBono)
             hsInfo.Add("@TransacId", tracking.ToString)
+            hsInfo.Add("@idUsuario", idUsuario)
             ds = EjecutaDatasetSP("sicobonV2.dbo.[spTimbrar_AnuladoIns]", sRes, hsInfo)
 
             mensaje = "ENVIADO|" & tracking.ToString
-            EscribirArchivo(mensaje, archivoBitactora)
+            EscribirArchivo(mensaje)
 
             Return mensaje
         Catch ex As Exception
             mensaje = ex.Message.ToString
-            EscribirArchivo(mensaje, archivoBitactora)
+            EscribirArchivo(mensaje)
             Return mensaje
         End Try
     End Function
@@ -128,63 +137,66 @@ Public Class Service
 
         '	b12c5f21-2e30-467d-bf2b-90216632a5be
 
-        Dim archivoBitactora As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & ".txt"
-        Dim archivoXmlStatusTransact As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & "_EdoTransac.xml"
+        Try
 
-        uuid = New Guid(transactionId)
+            Dim archivoXmlStatusTransact As String = GetWriteDirectory() & idBono & "_" & idFbo & "_EdoTransac.xml"
 
-        ServicePointManager.SecurityProtocol = DirectCast(3072, SecurityProtocolType)
-        resultado = client.GetTransactionStatusDetail(apiKy, uuid, error1, errorMessage, totalUUIDs, UUIDSent, UUIDRejected, finished, relatUIIS)
+            uuid = New Guid(transactionId)
 
-        If relatUIIS.Length > 0 Then
+            ServicePointManager.SecurityProtocol = DirectCast(3072, SecurityProtocolType)
+            resultado = client.GetTransactionStatusDetail(apiKy, uuid, error1, errorMessage, totalUUIDs, UUIDSent, UUIDRejected, finished, relatUIIS)
 
-            If relatUIIS(0).ResultCode IsNot Nothing Then
-                mensajeEstado = relatUIIS(0).ResultCode
-                resultCode = relatUIIS(0).ResultCode
+            If relatUIIS.Length > 0 Then
+
+                If relatUIIS(0).ResultCode IsNot Nothing Then
+                    mensajeEstado = relatUIIS(0).ResultCode
+                    resultCode = relatUIIS(0).ResultCode
+                End If
+
+                If Not relatUIIS(0).ResultMessage = Nothing Then
+                    mensajeEstado = mensajeEstado & " " & relatUIIS(0).ResultMessage
+                End If
+
+                If mensajeEstado = Nothing Then
+                    mensajeEstado = relatUIIS(0).UUIDStatus.CancellationStatus
+                End If
+
+                Try
+                    Dim writer As New System.Xml.Serialization.XmlSerializer(GetType(AnulacionTimbre.FolioFiscalDetail))
+
+                    Dim file As New System.IO.StreamWriter(archivoXmlStatusTransact)
+                    writer.Serialize(file, relatUIIS(0))
+                    file.Close()
+
+                Catch ex As Exception
+                    EscribirArchivo("No fue posible serializar la respuesta: " & vbCrLf & ex.Message.ToString)
+                End Try
+                xmlRes = LeerArchivo(archivoXmlStatusTransact)
             End If
 
-            If Not relatUIIS(0).ResultMessage = Nothing Then
-                mensajeEstado = mensajeEstado & " " & relatUIIS(0).ResultMessage
+            If mensajeEstado Is Nothing Then
+                mensajeEstado = "No se puedo leer el estado !?"
             End If
 
-            If mensajeEstado = Nothing Then
-                mensajeEstado = relatUIIS(0).UUIDStatus.CancellationStatus
-            End If
+            If resultCode Is Nothing Then resultCode = "-2"
+            If resultCode.Trim.Length = 0 Then resultCode = "-2"
+
+            Dim sRes As String = ""
+            Dim hsInfo As Hashtable
+            hsInfo = New Hashtable
+            hsInfo.Add("@IdBono", idBono)
+            hsInfo.Add("@Estado", mensajeEstado)
+            hsInfo.Add("@XmlRes", xmlRes)
+            hsInfo.Add("@ResultCode", resultCode)
+
+            EjecutaDatasetSP("SicobonV2.dbo.spTimbrar_AnuladoInsStatus", sRes, hsInfo)
+
+            Return mensajeEstado.ToString
+        Catch ex As Exception
+            Return ex.Message.ToString
+        End Try
 
 
-            Try
-                Dim writer As New System.Xml.Serialization.XmlSerializer(GetType(AnulacionTimbre.FolioFiscalDetail))
-
-                Dim file As New System.IO.StreamWriter(archivoXmlStatusTransact)
-                writer.Serialize(file, relatUIIS(0))
-                file.Close()
-
-            Catch ex As Exception
-                EscribirArchivo("No fue posible serializar la respuesta: " & vbCrLf & ex.Message.ToString, archivoBitactora)
-            End Try
-
-
-            xmlRes = LeerArchivo(archivoXmlStatusTransact)
-        End If
-
-        If mensajeEstado Is Nothing Then
-            mensajeEstado = "No se puedo leer el estado !?"
-        End If
-
-        If resultCode Is Nothing Then resultCode = "-2"
-        If resultCode.Trim.Length = 0 Then resultCode = "-2"
-
-        Dim sRes As String = ""
-        Dim hsInfo As Hashtable
-        hsInfo = New Hashtable
-        hsInfo.Add("@IdBono", idBono)
-        hsInfo.Add("@Estado", mensajeEstado)
-        hsInfo.Add("@XmlRes", xmlRes)
-        hsInfo.Add("@ResultCode", resultCode)
-
-        EjecutaDatasetSP("SicobonV2.dbo.spTimbrar_AnuladoInsStatus", sRes, hsInfo)
-
-        Return mensajeEstado.ToString
     End Function
 
     <WebMethod()>
@@ -199,8 +211,8 @@ Public Class Service
         'IdBono = "977292"
         'IdFbo = "520000033747"
 
-        Dim archivoBitactora As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & ".txt"
-        Dim archivoXmlStatus As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & "_EdoAnulacion.xml"
+
+        Dim archivoXmlStatus As String = GetWriteDirectory() & idBono & "_" & idFbo & "_EdoAnulacion.xml"
 
         'Traemos datos del timbre
         hsInfo.Add("@IdBono", idBono)
@@ -209,13 +221,13 @@ Public Class Service
 
         If ds Is Nothing Then
             mensaje = "Error *spTimbrar_Anulado_UUID*: " & sRes
-            EscribirArchivo(mensaje, archivoBitactora)
+            EscribirArchivo(mensaje)
             Return mensaje
         End If
 
         If ds.Tables(0).Rows.Count = 0 Then
             mensaje = "Registro no encontrado con el status -1- *spTimbrar_Anulado_UUID*"
-            EscribirArchivo(mensaje, archivoBitactora)
+            EscribirArchivo(mensaje)
             Return mensaje
         End If
 
@@ -276,7 +288,7 @@ Public Class Service
                     file.Close()
 
                 Catch ex As Exception
-                    EscribirArchivo("No fue posible serializar la respuesta: " & vbCrLf & ex.Message.ToString, archivoBitactora)
+                    EscribirArchivo("No fue posible serializar la respuesta: " & vbCrLf & ex.Message.ToString)
                 End Try
 
                 xmlRes = LeerArchivo(archivoXmlStatus)
@@ -285,7 +297,7 @@ Public Class Service
             If mensajeEstado Is Nothing Then mensajeEstado = resulcode + " " + resulmessag
             If resulcode IsNot Nothing Then resultCode = resulcode
 
-            EscribirArchivo("MensajeEstado: " & mensajeEstado.ToString, archivoBitactora)
+            EscribirArchivo("MensajeEstado: " & mensajeEstado.ToString)
 
             If resultCode Is Nothing Then resultCode = "-2"
             If resultCode.Trim.Length = 0 Then resultCode = "-2"
