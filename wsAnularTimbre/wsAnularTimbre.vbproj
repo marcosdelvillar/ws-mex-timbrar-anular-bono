@@ -120,6 +120,7 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>Reference.svcmap</DependentUpon>
     </Compile>
+    <Compile Include="Funciones.vb" />
     <Compile Include="Old_App_WebReferences\AnulacionTimbre\Reference.vb">
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>

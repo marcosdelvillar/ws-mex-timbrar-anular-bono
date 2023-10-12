@@ -19,10 +19,6 @@ Imports System.Guid
 Imports System.Net
 
 
-
-
-
-
 ' To allow this Web Service to be called from script, using ASP.NET AJAX, uncomment the following line.
 ' <System.Web.Script.Services.ScriptService()> _
 <WebService(Namespace:="http://tempuri.org/")> _
@@ -30,230 +26,279 @@ Imports System.Net
 <Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
 Public Class Service
      Inherits System.Web.Services.WebService
-    Dim PathXML As String
-    Dim nameXML As String
-    Dim nameXMLP As String
-    Dim sRES As String = ""
-    Dim apiKy As String = "y7dr7tzcwjsn7k2icwsypmj6vj8nmaxuufjjcfubrfvfmxqbvmnnvgwb9nstumcmp5ifqwtjry2akhvu"  ''LLave para Produccion
-    Dim apiKyPruebas As String = "yywkagn3khxappz4ithfvgmbypuxinab4xxup4z48tdbcqk66tkzm5suvbkeqxmi7bymjgzpspvxc443" ''LLave para Produccion
+
+
+    ReadOnly apiKy As String = "y7dr7tzcwjsn7k2icwsypmj6vj8nmaxuufjjcfubrfvfmxqbvmnnvgwb9nstumcmp5ifqwtjry2akhvu"  ''LLave para Produccion
+    ReadOnly apiKyPruebas As String = "yywkagn3khxappz4ithfvgmbypuxinab4xxup4z48tdbcqk66tkzm5suvbkeqxmi7bymjgzpspvxc443" ''LLave para Produccion
     'Dim apiKy As String = "d5ecdce5903344c08eeb1c7d8265ae4fbfb22fec42c540979bfe03f191aa7562" ''LLave para Produccion
-    Private m_xmlDOM As System.Xml.XmlDocument
-    Private Nodo As System.Xml.XmlNode
 
-    Private RutaBitacora As String = "C:\inetpub\wwwroot\wsTimAnularBono\Bitacora\"
+    Private ReadOnly RutaBitacora As String = "C:\inetpub\wwwroot\wsTimAnularBono\Bitacora\"
 
-    <WebMethod()> _
-    Public Function HelloWorld() As String
-        Return "Ver. 1.1"
+    <WebMethod()>
+    Public Function Version() As String
+        Return "Ver. 1.1.2"
     End Function
 
-    <WebMethod()> _
-    Public Function EstadoTransaccion(ByVal IdBono As String, _
-                                      ByVal IdFbo As String, _
-                                      ByVal TransactionId As String) As String
+
+    <WebMethod()>
+    Public Function CancelarCfdi(idBono As String,
+                                 idFbo As String) As String
+
+        Dim hsInfo As New Hashtable
+        Dim ds As System.Data.DataSet
+        Dim mensaje As String
+        Dim sRes As String = ""
+
+        'IdBono = "977292"
+        'IdFbo = "520000033747"
+
+        Dim archivoBitactora As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & ".txt"
+        Dim archivoXmlStatus As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & "_cancelaCFDI.xml"
+
+        Dim oWs As New AnulacionTimbre.CancelacionClient()
+
+        'Traemos datos del timbre
+        hsInfo.Add("@IdBono", idBono)
+        hsInfo.Add("@CveEmpresario", idFbo)
+        ds = EjecutaDatasetSP("sicobonV2.dbo.[spTimbrar_Anulado_UUID]", sRes, hsInfo)
+
+        If ds.Tables(0).Rows.Count = 0 Then
+            mensaje = "Registro no encontrado con el status -1- *spTimbrar_Anulado_UUID*"
+            EscribirArchivo(mensaje, archivoBitactora)
+            Return mensaje
+        End If
+
+        Dim errorMessage As Boolean
+        Dim foliosCancelados As Integer
+        Dim foliosAnular(0) As AnulacionTimbre.CancelFolio
+        Dim transec(0) As AnulacionTimbre.TransactionProperty
+        Dim tracking As Guid
+        Dim errorReturn As AnulacionTimbre.ErrorMessageCode
+        Dim setting As New XmlWriterSettings()
+        Try
+
+            foliosCancelados = 0
+            foliosAnular(0) = New AnulacionTimbre.CancelFolio()
+            foliosAnular(0).UUID = ds.Tables(0).Rows(0).Item("TFD_UUID").ToString()
+            foliosAnular(0).Reason = "03"
+            transec(0) = New AnulacionTimbre.TransactionProperty
+
+            ServicePointManager.SecurityProtocol = DirectCast(3072, SecurityProtocolType)
+            errorReturn = oWs.Cancelar(apiKy, ds.Tables(0).Rows(0).Item("EMI_RFC").ToString(), foliosAnular, transec, errorMessage, tracking)
+            oWs.Close()
+
+            hsInfo.Clear()
+            hsInfo.Add("@IdBono", idBono)
+            hsInfo.Add("@TransacId", tracking.ToString)
+            ds = EjecutaDatasetSP("sicobonV2.dbo.[spTimbrar_AnuladoIns]", sRes, hsInfo)
+
+            mensaje = "ENVIADO|" & tracking.ToString
+            EscribirArchivo(mensaje, archivoBitactora)
+
+            Return mensaje
+        Catch ex As Exception
+            mensaje = ex.Message.ToString
+            EscribirArchivo(mensaje, archivoBitactora)
+            Return mensaje
+        End Try
+    End Function
+
+    <WebMethod()>
+    Public Function EstadoTransaccion(idBono As String,
+                                      idFbo As String,
+                                      transactionId As String) As String
 
         Dim uuid As New Guid
         Dim client As AnulacionTimbre.CancelacionClient = New AnulacionTimbre.CancelacionClient()
-        Dim Error1 As New AnulacionTimbre.ErrorMessageCode
-        Dim ErrorMessage As New AnulacionTimbre.ErrorMessageCode
+        Dim error1 As New AnulacionTimbre.ErrorMessageCode
+        Dim errorMessage As New AnulacionTimbre.ErrorMessageCode
 
         Dim resulmessag As String = ""
         Dim resulcode As String = ""
         Dim uuiStatus As New AnulacionTimbre.StateQueryResponse
-        Dim RelatUIIS() As AnulacionTimbre.FolioFiscalDetail
-        Dim TotalUUIDs, UUIDRejected, UUIDSent As Integer
-        Dim Finished, resultado As Boolean
-        Dim MensajeEstado As String = ""
-        Dim XmlRes As String = ""
-        Dim ResultCode As String = "-1" 'valor por default. En ocasiones no devuelve el ResultCode
+        Dim relatUIIS() As AnulacionTimbre.FolioFiscalDetail
+        Dim totalUUIDs, UUIDRejected, UUIDSent As Integer
+        Dim finished, resultado As Boolean
+        Dim mensajeEstado As String = ""
+        Dim xmlRes As String = ""
+        Dim resultCode As String = "-1" 'valor por default. En ocasiones no devuelve el ResultCode
         'IdBono = "977289"
         'IdFbo = "520000016327"
         'TransactionId = "b12c5f21-2e30-467d-bf2b-90216632a5be"
 
         '	b12c5f21-2e30-467d-bf2b-90216632a5be
 
-        Dim ArchivoBitactora As String = RutaBitacora & "" & "" & IdBono & "_" & IdFbo & ".txt"
-        Dim ArchivoXmlStatusTransact As String = RutaBitacora & "" & "" & IdBono & "_" & IdFbo & "_EdoTransac.xml"
+        Dim archivoBitactora As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & ".txt"
+        Dim archivoXmlStatusTransact As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & "_EdoTransac.xml"
 
-        uuid = New Guid(TransactionId)
+        uuid = New Guid(transactionId)
 
         ServicePointManager.SecurityProtocol = DirectCast(3072, SecurityProtocolType)
-        resultado = client.GetTransactionStatusDetail(apiKy, uuid, Error1, ErrorMessage, TotalUUIDs, UUIDSent, UUIDRejected, Finished, RelatUIIS)
+        resultado = client.GetTransactionStatusDetail(apiKy, uuid, error1, errorMessage, totalUUIDs, UUIDSent, UUIDRejected, finished, relatUIIS)
 
-        If RelatUIIS.Length > 0 Then
+        If relatUIIS.Length > 0 Then
 
-            If Not RelatUIIS(0).ResultCode Is Nothing Then
-                MensajeEstado = RelatUIIS(0).ResultCode
-                ResultCode = RelatUIIS(0).ResultCode
+            If relatUIIS(0).ResultCode IsNot Nothing Then
+                mensajeEstado = relatUIIS(0).ResultCode
+                resultCode = relatUIIS(0).ResultCode
             End If
 
-            If Not RelatUIIS(0).ResultMessage = Nothing Then
-                MensajeEstado = MensajeEstado & " " & RelatUIIS(0).ResultMessage
+            If Not relatUIIS(0).ResultMessage = Nothing Then
+                mensajeEstado = mensajeEstado & " " & relatUIIS(0).ResultMessage
             End If
 
-            If MensajeEstado = Nothing Then
-                MensajeEstado = RelatUIIS(0).UUIDStatus.CancellationStatus
+            If mensajeEstado = Nothing Then
+                mensajeEstado = relatUIIS(0).UUIDStatus.CancellationStatus
             End If
 
 
             Try
                 Dim writer As New System.Xml.Serialization.XmlSerializer(GetType(AnulacionTimbre.FolioFiscalDetail))
 
-                Dim file As New System.IO.StreamWriter(ArchivoXmlStatusTransact)
-                writer.Serialize(file, RelatUIIS(0))
+                Dim file As New System.IO.StreamWriter(archivoXmlStatusTransact)
+                writer.Serialize(file, relatUIIS(0))
                 file.Close()
 
             Catch ex As Exception
-                EscribirArchivo("No fue posible serializar la respuesta: " & vbCrLf & ex.Message.ToString, ArchivoBitactora)
+                EscribirArchivo("No fue posible serializar la respuesta: " & vbCrLf & ex.Message.ToString, archivoBitactora)
             End Try
 
 
-            XmlRes = LeerArchivo(ArchivoXmlStatusTransact)
+            xmlRes = LeerArchivo(archivoXmlStatusTransact)
         End If
 
-        If MensajeEstado Is Nothing Then
-            MensajeEstado = "No se puedo leer el estado !?"
+        If mensajeEstado Is Nothing Then
+            mensajeEstado = "No se puedo leer el estado !?"
         End If
 
-        If ResultCode Is Nothing Then ResultCode = "-2"
-        If ResultCode.Trim.Length = 0 Then ResultCode = "-2"
+        If resultCode Is Nothing Then resultCode = "-2"
+        If resultCode.Trim.Length = 0 Then resultCode = "-2"
 
+        Dim sRes As String = ""
         Dim hsInfo As Hashtable
         hsInfo = New Hashtable
-        hsInfo.Add("@IdBono", IdBono)
-        hsInfo.Add("@Estado", MensajeEstado)
-        hsInfo.Add("@XmlRes", XmlRes)
-        hsInfo.Add("@ResultCode", ResultCode)
+        hsInfo.Add("@IdBono", idBono)
+        hsInfo.Add("@Estado", mensajeEstado)
+        hsInfo.Add("@XmlRes", xmlRes)
+        hsInfo.Add("@ResultCode", resultCode)
 
+        EjecutaDatasetSP("SicobonV2.dbo.spTimbrar_AnuladoInsStatus", sRes, hsInfo)
 
-        EjecutaDatasetSP("SicobonV2.dbo.spTimbrar_AnuladoInsStatus", sRES, hsInfo)
-
-
-        Return MensajeEstado.ToString
-
+        Return mensajeEstado.ToString
     End Function
 
-    <WebMethod()> _
-    Public Function EstatusAnulacion(ByVal IdBono As String, ByVal IdFbo As String) As String
+    <WebMethod()>
+    Public Function EstatusAnulacion(idBono As String,
+                                     idFbo As String) As String
 
         Dim hsInfo As New Hashtable
         Dim ds As System.Data.DataSet
         Dim resul As Boolean
         Dim mensaje As String
-
-
+        Dim sRes As String = ""
         'IdBono = "977292"
         'IdFbo = "520000033747"
 
-
-
-        Dim ArchivoBitactora As String = RutaBitacora & "" & "" & IdBono & "_" & IdFbo & ".txt"
-        Dim ArchivoXmlStatus As String = RutaBitacora & "" & "" & IdBono & "_" & IdFbo & "_EdoAnulacion.xml"
+        Dim archivoBitactora As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & ".txt"
+        Dim archivoXmlStatus As String = RutaBitacora & "" & "" & idBono & "_" & idFbo & "_EdoAnulacion.xml"
 
         'Traemos datos del timbre
-        hsInfo.Add("@IdBono", IdBono)
-        hsInfo.Add("@CveEmpresario", IdFbo)
-        ds = EjecutaDatasetSP("SicobonV2.dbo.spTimbrar_Anulado_UUID", sRES, hsInfo)
+        hsInfo.Add("@IdBono", idBono)
+        hsInfo.Add("@CveEmpresario", idFbo)
+        ds = EjecutaDatasetSP("SicobonV2.dbo.spTimbrar_Anulado_UUID", sRes, hsInfo)
 
         If ds Is Nothing Then
-            mensaje = "Error *spTimbrar_Anulado_UUID*: " & sRES
-            EscribirArchivo(mensaje, ArchivoBitactora)
+            mensaje = "Error *spTimbrar_Anulado_UUID*: " & sRes
+            EscribirArchivo(mensaje, archivoBitactora)
             Return mensaje
         End If
 
         If ds.Tables(0).Rows.Count = 0 Then
             mensaje = "Registro no encontrado con el status -1- *spTimbrar_Anulado_UUID*"
-            EscribirArchivo(mensaje, ArchivoBitactora)
+            EscribirArchivo(mensaje, archivoBitactora)
             Return mensaje
         End If
 
 
         Dim uuid As New Guid
-        Dim client As AnulacionTimbre.CancelacionClient = New AnulacionTimbre.CancelacionClient()
-        Dim ErrorReturn As New AnulacionTimbre.ErrorMessageCode
-        Dim SentRequest As Boolean
+        Dim client As New AnulacionTimbre.CancelacionClient()
+        Dim errorReturn As New AnulacionTimbre.ErrorMessageCode
+        Dim sentRequest As Boolean
         Dim resulmessag As String = ""
         Dim resulcode As String = ""
         Dim uuiStatus As New AnulacionTimbre.StateQueryResponse
-        Dim RelatUIIS(0) As AnulacionTimbre.FolioFiscalDetail
-        Dim ResultCode As String = ""
+        Dim relatUIIS(0) As AnulacionTimbre.FolioFiscalDetail
+        Dim resultCode As String = ""
         Try
 
-            '  uuid = Guid.Parse(ds.Tables(0).Rows(0).Item("TFD_UUID"))
+            'uuid = Guid.Parse(ds.Tables(0).Rows(0).Item("TFD_UUID"))
 
             Dim UUIDLocal As String = ds.Tables(0).Rows(0).Item("TFD_UUID").ToString
             'UUIDLocal = "6F31C067-AB9F-4513-BF64-99866950E66F"
             uuid = New Guid(UUIDLocal)
             '   uuid = DirectCast(ds.Tables(0).Rows(0).Item("TFD_UUID"), Guid)
-            RelatUIIS(0) = New AnulacionTimbre.FolioFiscalDetail
+            relatUIIS(0) = New AnulacionTimbre.FolioFiscalDetail
             ServicePointManager.SecurityProtocol = DirectCast(3072, SecurityProtocolType)
-            resul = client.GetFolioStatusDetail(apiKy, uuid, ErrorReturn, SentRequest, resulcode, resulmessag, uuiStatus, RelatUIIS)
+            resul = client.GetFolioStatusDetail(apiKy, uuid, errorReturn, sentRequest, resulcode, resulmessag, uuiStatus, relatUIIS)
 
             ' client.Cancelar(apiKy, ds.Tables(0).Rows(0).Item("EMI_RFC").ToString(), )
             ' Always close the client.
             client.Close()
 
-            Dim MensajeEstado As String
-            Dim XmlRes As String = ""
+            Dim mensajeEstado As String
+            Dim xmlRes As String = ""
 
             Try
-                MensajeEstado = RelatUIIS(0).ResultMessage
+                mensajeEstado = relatUIIS(0).ResultMessage
             Catch ex As Exception
-                MensajeEstado = Nothing
+                mensajeEstado = Nothing
             End Try
 
             'Mirar si tiene resultado. Si no, el error se tiene que leer de otro lado.
-            If RelatUIIS.Length > 0 Then
-                If MensajeEstado Is Nothing Then
-                    MensajeEstado = RelatUIIS(0).UUIDStatus.CancellationStatus
+            If relatUIIS.Length > 0 Then
+                If mensajeEstado Is Nothing Then
+                    mensajeEstado = relatUIIS(0).UUIDStatus.CancellationStatus
                 End If
 
-                If MensajeEstado Is Nothing Or MensajeEstado.Trim.Length = 0 Then
-                    MensajeEstado = RelatUIIS(0).UUIDStatus.IsCancellable
+                If mensajeEstado Is Nothing Or mensajeEstado.Trim.Length = 0 Then
+                    mensajeEstado = relatUIIS(0).UUIDStatus.IsCancellable
                 End If
 
-                If Not RelatUIIS(0).ResultCode Is Nothing Then
-                    ResultCode = RelatUIIS(0).ResultCode
+                If Not relatUIIS(0).ResultCode Is Nothing Then
+                    resultCode = relatUIIS(0).ResultCode
                 End If
 
                 Try
                     Dim writer As New System.Xml.Serialization.XmlSerializer(GetType(AnulacionTimbre.FolioFiscalDetail))
 
-                    Dim file As New System.IO.StreamWriter(ArchivoXmlStatus)
-                    writer.Serialize(file, RelatUIIS(0))
+                    Dim file As New System.IO.StreamWriter(archivoXmlStatus)
+                    writer.Serialize(file, relatUIIS(0))
                     file.Close()
 
                 Catch ex As Exception
-                    EscribirArchivo("No fue posible serializar la respuesta: " & vbCrLf & ex.Message.ToString, ArchivoBitactora)
+                    EscribirArchivo("No fue posible serializar la respuesta: " & vbCrLf & ex.Message.ToString, archivoBitactora)
                 End Try
 
-
-                XmlRes = LeerArchivo(ArchivoXmlStatus)
+                xmlRes = LeerArchivo(archivoXmlStatus)
             End If
 
+            If mensajeEstado Is Nothing Then mensajeEstado = resulcode + " " + resulmessag
+            If resulcode IsNot Nothing Then resultCode = resulcode
 
-            If MensajeEstado Is Nothing Then
-                MensajeEstado = resulcode + " " + resulmessag
-            End If
+            EscribirArchivo("MensajeEstado: " & mensajeEstado.ToString, archivoBitactora)
 
-            If Not resulcode Is Nothing Then
-                ResultCode = resulcode
-            End If
-
-            EscribirArchivo("MensajeEstado: " & MensajeEstado.ToString, ArchivoBitactora)
-
-            If ResultCode Is Nothing Then ResultCode = "-2"
-            If ResultCode.Trim.Length = 0 Then ResultCode = "-2"
+            If resultCode Is Nothing Then resultCode = "-2"
+            If resultCode.Trim.Length = 0 Then resultCode = "-2"
 
             hsInfo = New Hashtable
-            hsInfo.Add("@IdBono", IdBono)
-            hsInfo.Add("@Estado", MensajeEstado)
-            hsInfo.Add("@XmlRes", XmlRes)
-            hsInfo.Add("@ResultCode", ResultCode)
+            hsInfo.Add("@IdBono", idBono)
+            hsInfo.Add("@Estado", mensajeEstado)
+            hsInfo.Add("@XmlRes", xmlRes)
+            hsInfo.Add("@ResultCode", resultCode)
 
-            ds = EjecutaDatasetSP("SicobonV2.dbo.spTimbrar_AnuladoInsStatus", sRES, hsInfo)
+            ds = EjecutaDatasetSP("SicobonV2.dbo.spTimbrar_AnuladoInsStatus", sRes, hsInfo)
 
-            Return MensajeEstado.ToString
+            Return mensajeEstado.ToString
         Catch ex As Exception
             resul = ex.Message.ToString
             Return resul
@@ -261,181 +306,6 @@ Public Class Service
 
     End Function
 
-#Region "Cancelacion de Timbrado de CFD"
-    <WebMethod()> _
-    Public Function CancelarCFDI(ByVal IdBono As String, ByVal IdFbo As String) As String
-        Dim sREST As String
-        Dim hsInfo As New Hashtable
-        Dim ErrTimbre As String = "0"
-        Dim ds As System.Data.DataSet
-        Dim mensaje As String
-
-        'IdBono = "977292"
-        'IdFbo = "520000033747"
-
-        Dim ArchivoBitactora As String = RutaBitacora & "" & "" & IdBono & "_" & IdFbo & ".txt"
-        Dim ArchivoXmlStatus As String = RutaBitacora & "" & "" & IdBono & "_" & IdFbo & "_cancelaCFDI.xml"
-
-        Dim Ows As AnulacionTimbre.CancelacionClient = New AnulacionTimbre.CancelacionClient()
-
-        'Traemos datos del timbre
-        hsInfo.Add("@IdBono", IdBono)
-        hsInfo.Add("@CveEmpresario", IdFbo)
-        ds = EjecutaDatasetSP("sicobonV2.dbo.[spTimbrar_Anulado_UUID]", sRES, hsInfo)
-
-        If ds.Tables(0).Rows.Count = 0 Then
-            mensaje = "Registro no encontrado con el status -1- *spTimbrar_Anulado_UUID*"
-            EscribirArchivo(mensaje, ArchivoBitactora)
-            Return mensaje
-        End If
 
 
-        Dim ErrorMessage As Boolean
-
-        Dim FoliosCancelados As Integer
-        'Dim AcuseSAT As String
-        Dim FoliosAnular(0) As AnulacionTimbre.CancelFolio
-        Dim transec(0) As AnulacionTimbre.TransactionProperty
-        Dim tracking As Guid
-        Dim ErrorReturn As AnulacionTimbre.ErrorMessageCode
-        Dim setting As XmlWriterSettings = New XmlWriterSettings()
-        Try
-
-            FoliosCancelados = 0
-
-            FoliosAnular(0) = New AnulacionTimbre.CancelFolio()
-
-            FoliosAnular(0).UUID = ds.Tables(0).Rows(0).Item("TFD_UUID").ToString()
-            FoliosAnular(0).Reason = "03"
-            transec(0) = New AnulacionTimbre.TransactionProperty
-
-            ServicePointManager.SecurityProtocol = DirectCast(3072, SecurityProtocolType)
-            ErrorReturn = Ows.Cancelar(apiKy, ds.Tables(0).Rows(0).Item("EMI_RFC").ToString(), FoliosAnular, transec, ErrorMessage, tracking)
-            Ows.Close()
-
-            hsInfo.Clear()
-            hsInfo.Add("@IdBono", IdBono)
-            hsInfo.Add("@TransacId", tracking.ToString)
-            ds = EjecutaDatasetSP("sicobonV2.dbo.[spTimbrar_AnuladoIns]", sRES, hsInfo)
-
-            mensaje = "ENVIADO|" & tracking.ToString
-            EscribirArchivo(mensaje, ArchivoBitactora)
-
-            Return mensaje
-
-        Catch ex As Exception
-            mensaje = ex.Message.ToString
-            EscribirArchivo(mensaje, ArchivoBitactora)
-            Return mensaje
-        End Try
-    End Function
-#End Region
-    Public Shared Function EjecutaDatasetSP(ByVal StoredProcedure As String, ByRef sError As String, Optional ByVal Parametros As Hashtable = Nothing) As DataSet
-
-        Dim cmdCommand As System.Data.SqlClient.SqlCommand
-        Dim con As New SqlClient.SqlConnection
-        Try
-            Dim strConnectionString As String = ConfigurationManager.ConnectionStrings("SWForever_ConnectionString").ConnectionString
-            con.ConnectionString = strConnectionString
-            If con.State <> ConnectionState.Open Then
-                con.Open()
-            End If
-
-            cmdCommand = New SqlCommand
-            cmdCommand.CommandText = StoredProcedure
-            cmdCommand.CommandType = CommandType.StoredProcedure
-            cmdCommand.Connection = con
-
-            If Not Parametros Is Nothing Then
-                Dim Col As String
-                For Each KeyHash As Object In Parametros.Keys
-                    Col = KeyHash.ToString
-                    cmdCommand.Parameters.Add(New SqlClient.SqlParameter(Col, Parametros(Col)))
-                Next
-            End If
-            Dim daEjecutaDs As SqlDataAdapter = New SqlDataAdapter
-            Dim dsEjecutaDs As DataSet = New DataSet
-            daEjecutaDs.SelectCommand = cmdCommand
-            daEjecutaDs.Fill(dsEjecutaDs)
-            con.Close()
-            sError = "TODOOK"
-            Return dsEjecutaDs
-        Catch ex As Exception
-            sError = ex.Message
-            con.Close()
-            Return Nothing
-        End Try
-
-    End Function
-
-    Private Sub writeFile(ByVal sCONTENIDO As String, ByVal sDESTINO As String)
-
-        Dim strArchivo As String = sDESTINO
-
-        Try
-            If FileIO.FileSystem.FileExists(strArchivo) Then FileIO.FileSystem.DeleteFile(strArchivo)
-
-            FileOpen(2, strArchivo, OpenMode.Append, OpenAccess.Write, OpenShare.LockWrite)
-            PrintLine(2, sCONTENIDO)
-            FileClose(2)
-
-        Catch ex As Exception
-
-        End Try
-
-    End Sub
-
-    Private Shared Function EscribirArchivo(ByVal sCONTENIDO As String, ByVal sDESTINO As String) As String
-
-        Dim strArchivo As String = sDESTINO
-
-        Try
-            'If FileIO.FileSystem.FileExists(strArchivo) Then FileIO.FileSystem.DeleteFile(strArchivo)
-
-            FileOpen(2, strArchivo, OpenMode.Append, OpenAccess.Write, OpenShare.LockWrite)
-            PrintLine(2, sCONTENIDO)
-            FileClose(2)
-
-            Return "TODOOK"
-        Catch ex As Exception
-            Return "Error al escribir archivo: " & ex.Message.ToString
-        End Try
-
-    End Function
-
-    Public Function LeerArchivo(ByVal FileName As String) As String
-        Dim oRead As System.IO.StreamReader
-        Dim LineIn As New StringBuilder
-
-        Try
-            'SE REVISA QUE EXISTA EL ARCHIVO 
-            If Not File.Exists(FileName) Then
-                Return "Error, El archivo no existe en la ruta: " & FileName
-            End If
-
-            'SE REALIZA LA LECTURA DEL ARCHIVO
-            oRead = File.OpenText(FileName)
-
-            'SE RECORRE TODO EL STREAM DEL ARCHIVO
-            While Not oRead.EndOfStream
-                'SE ALMACENA EL CONTENIDO DE LA LINEA EN LA VARIABLE
-                LineIn.Append(oRead.ReadLine().Replace(vbCrLf, ""))
-            End While
-
-            'SE CIERRA EL STREAM DEL ARCHIVO
-            oRead.Close()
-
-            Dim resultado As String = LineIn.ToString
-
-            resultado = resultado.Replace("á", "a")
-            resultado = resultado.Replace("é", "e")
-            resultado = resultado.Replace("í", "i")
-            resultado = resultado.Replace("ó", "o")
-            resultado = resultado.Replace("ú", "u")
-
-            Return resultado
-        Catch ex As Exception
-            Return ""
-        End Try
-    End Function
 End Class
