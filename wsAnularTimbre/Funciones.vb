@@ -67,7 +67,8 @@ Module Funciones
     Public Function EscribirArchivo(ByVal sCONTENIDO As String) As String
 
         Dim Directorio As String = ConfigurationManager.AppSettings("DirSalida").ToString & "" & Now.Year & "\" & Format(Now.Month, "00") & "\"
-        Dim strArchivo As String = Directorio & $"bita{Now:dd}.txt"
+        Dim strArchivo As String = Directorio & $"bita_" & Now.Day & ".txt"
+
         If Not IO.Directory.Exists(Directorio) Then IO.Directory.CreateDirectory(Directorio)
 
         Try
@@ -115,6 +116,25 @@ Module Funciones
         Catch ex As Exception
             Return ""
         End Try
+    End Function
+
+    Public Function EscribirXml(sXml As String,
+                                RutaArchivo As String) As String
+
+
+
+
+        If Not IO.File.Exists(RutaArchivo) Then IO.File.Delete(RutaArchivo)
+
+        Try
+            FileOpen(2, RutaArchivo, OpenMode.Append, OpenAccess.Write, OpenShare.LockWrite)
+            PrintLine(2, sXml)
+            FileClose(2)
+            Return "TODOOK"
+        Catch ex As Exception
+            Return "Error al escribir archivo: " & ex.Message.ToString
+        End Try
+
     End Function
 
 End Module
